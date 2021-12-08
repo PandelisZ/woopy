@@ -8,22 +8,25 @@ import (
 	"gorm.io/gorm"
 	"io"
 	"net/http"
-	"time"
 )
 
 var db *gorm.DB
 
 type Todo struct {
 	gorm.Model
-	Todo  string
+	Todo string
 	Done bool
 }
 
-func hello(w http.ResponseWriter, req *http.Request) {
+func home(w http.ResponseWriter, req *http.Request) {
+	body := `<body>
+	<ul>
+		<li>GET <a href="/todo">/todo</a></li>
+		<li>POST <a href="/todo">/todo</a></li>
+	</ul>
+</body`
 
-	now := time.Now()
-
-	fmt.Fprintf(w, "%v", now)
+	fmt.Fprintf(w, "%v", body)
 }
 
 func headers(w http.ResponseWriter, req *http.Request) {
@@ -35,13 +38,26 @@ func headers(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func getAllTodos (w http.ResponseWriter, req *http.Request) {
-
+func getAllTodos(w http.ResponseWriter, req *http.Request) {
 	var allTodos []Todo
 	db.Find(&allTodos)
 
+	myTodos, err := json.Marshal(&allTodos)
+	if err != nil {
+		handleErr(err, w, http.StatusInternalServerError)
+		return
+	}
 
-	//fmt.Fprintf(w, Todo[])
+
+	w.Write(myTodos)
+}
+
+func applicationSetupMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		w.Header().Set("server", "Toaster,V1.3;")
+		next.ServeHTTP(w, r)
+    })
 }
 
 func main() {
@@ -59,12 +75,13 @@ func main() {
 	}
 
 	r := mux.NewRouter()
-	r.HandleFunc("/", hello)
+	r.HandleFunc("/", home)
 	r.HandleFunc("/todo", getAllTodos).Methods("GET")
 	r.HandleFunc("/todo", createTodo).Methods("POST")
+	r.Use(applicationSetupMiddleware)
 	http.Handle("/", r)
 
-	fmt.Println("Starting server on localhost:8090")
+	fmt.Println("Starting server on http://localhost:8090")
 	err = http.ListenAndServe(":8090", nil)
 	if err != nil {
 		fmt.Println("Oh nooo!")
@@ -79,46 +96,38 @@ type TodoJson struct {
 type ErrorResponse struct {
 	Error string
 }
+
+func handleErr(err error, w http.ResponseWriter, responseCode int) {
+	errorRes := ErrorResponse{
+		Error: err.Error(),
+	}
+	w.WriteHeader(responseCode)
+	response, err := json.Marshal(&errorRes)
+	if err != nil {
+		fmt.Println(err)
+	}
+	_, err = w.Write(response)
+	if err != nil {
+		fmt.Println(err)
+	}
+}
+
 // createTodo is our method of creating todos
 func createTodo(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("content-type", "application/json")
 
 	newTodo := TodoJson{}
 
 	input, err := io.ReadAll(r.Body)
 	if err != nil {
 		fmt.Println("Failed to read body")
-		errorRes := ErrorResponse{
-			Error: err.Error(),
-		}
-		w.WriteHeader(http.StatusInternalServerError)
-		response, err := json.Marshal(&errorRes)
-		if err != nil {
-			fmt.Println(err)
-		}
-		_, err = w.Write(response)
-		if err != nil {
-			fmt.Println(err)
-		}
+		handleErr(err, w, http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
 
 	err = json.Unmarshal(input, &newTodo)
 	if err != nil {
-		fmt.Println(err)
-		errorRes := ErrorResponse{
-			Error: err.Error(),
-		}
-		w.WriteHeader(http.StatusBadRequest)
-		response, err := json.Marshal(&errorRes)
-		if err != nil {
-			fmt.Println(err)
-		}
-		_, err = w.Write(response)
-		if err != nil {
-			fmt.Println(err)
-		}
+		handleErr(err, w, http.StatusBadRequest)
 		return
 	}
 
